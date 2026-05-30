@@ -1,0 +1,17 @@
+# Compiled binaries
+/bin/
+/gateway
+*.exe
+
+# Local environment / secrets — never commit these
+.env
+
+# Go test & coverage artifacts
+*.test
+*.out
+coverage.*
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
