@@ -48,7 +48,7 @@ func (s *Server) handleChat(c *gin.Context) {
 		Messages: req.Messages,
 	})
 	if err != nil {
-		s.log.Error("provider failed to start stream", "provider", s.provider.Name(), "error", err)
+		s.logger(c).Error("provider failed to start stream", "provider", s.provider.Name(), "error", err)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "upstream provider error"})
 		return
 	}
@@ -81,7 +81,7 @@ func (s *Server) streamSSE(c *gin.Context, stream <-chan providers.StreamChunk) 
 	for chunk := range stream {
 		switch {
 		case chunk.Err != nil:
-			s.log.Error("provider stream error", "provider", s.provider.Name(), "error", chunk.Err)
+			s.logger(c).Error("provider stream error", "provider", s.provider.Name(), "error", chunk.Err)
 			// Status 200 + headers were already sent on the first write, so we
 			// cannot change the status now. Signal the failure in-band as an SSE
 			// event, then stop (no [DONE]).
@@ -108,7 +108,7 @@ func (s *Server) bufferedJSON(c *gin.Context, stream <-chan providers.StreamChun
 	var sb strings.Builder
 	for chunk := range stream {
 		if chunk.Err != nil {
-			s.log.Error("provider stream error", "provider", s.provider.Name(), "error", chunk.Err)
+			s.logger(c).Error("provider stream error", "provider", s.provider.Name(), "error", chunk.Err)
 			c.JSON(http.StatusBadGateway, gin.H{"error": "upstream stream error"})
 			return
 		}
@@ -136,8 +136,13 @@ func (s *Server) handleHealthz(c *gin.Context) {
 }
 
 // handleReadyz is a readiness probe: it reports whether we can serve traffic.
-// It always returns 200 today; in Phase 2 it will also check Redis so that
-// Kubernetes stops routing to a pod that has lost its dependencies.
+// It returns 503 once the server has been marked not-ready (during graceful
+// shutdown) so Kubernetes stops routing new requests here while in-flight ones
+// drain. In Phase 2 it will additionally check dependencies (e.g. Redis).
 func (s *Server) handleReadyz(c *gin.Context) {
+	if !s.ready.Load() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "ready"})
 }

@@ -5,6 +5,7 @@ package server
 import (
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 
@@ -21,6 +22,11 @@ type Server struct {
 	provider providers.Provider
 	log      *slog.Logger
 	engine   *gin.Engine
+
+	// ready gates the readiness probe. It starts true and is flipped to false
+	// at the start of graceful shutdown so Kubernetes stops routing new traffic
+	// to this pod before we drain in-flight requests.
+	ready atomic.Bool
 }
 
 // New constructs a Server and registers all routes.
@@ -30,16 +36,25 @@ func New(cfg *config.Config, provider providers.Provider, log *slog.Logger) *Ser
 		provider: provider,
 		log:      log,
 	}
+	s.ready.Store(true)
 
 	engine := gin.New()
-	// gin.New() has NO middleware by default (unlike gin.Default()). We add only
-	// Recovery, which converts a panic in a handler into a 500 instead of
-	// crashing the whole process. Request logging via slog comes in Phase 3.
-	engine.Use(gin.Recovery())
+	// gin.New() has NO middleware by default (unlike gin.Default()). We add our
+	// own: requestLogger (structured JSON access logs + request ids) outermost
+	// so it still logs panicking requests, then Recovery, which converts a panic
+	// in a handler into a 500 instead of crashing the whole process.
+	engine.Use(s.requestLogger(), gin.Recovery())
 
 	s.registerRoutes(engine)
 	s.engine = engine
 	return s
+}
+
+// SetReady flips the readiness flag reported by GET /readyz. main() sets it to
+// false when a shutdown signal arrives so load balancers drain this instance
+// before the process exits.
+func (s *Server) SetReady(ready bool) {
+	s.ready.Store(ready)
 }
 
 // Handler exposes the underlying http.Handler so main() can mount it on an

@@ -9,9 +9,11 @@ and full observability** — live in one central place.
 This is the same infrastructure pattern behind Cloudflare AI Gateway, Kong AI
 Gateway, LiteLLM, and Portkey.
 
-> **Status:** Phase 1 complete — core SSE streaming proxy to OpenAI behind a
-> `Provider` interface, with health probes and handler tests. See the
-> [roadmap](#roadmap) below.
+> **Status:** Phase 1 complete — SSE streaming proxy to OpenAI behind a
+> `Provider` interface, with liveness + readiness probes, per-request
+> structured JSON logging (request ids), a tuned HTTP transport, graceful
+> shutdown, table-driven tests, a multi-stage distroless container image,
+> Kubernetes manifests, and GitHub Actions CI. See the [roadmap](#roadmap) below.
 
 ## Architecture
 
@@ -35,16 +37,17 @@ rest land in later phases.
 
 | Concern              | Choice                                          |
 | -------------------- | ----------------------------------------------- |
-| Language             | Go 1.22+                                         |
+| Language             | Go 1.25+                                         |
 | HTTP framework       | Gin                                             |
 | Provider I/O         | **Raw `net/http`** behind a `Provider` interface |
 | Streaming to client  | Server-Sent Events (SSE)                        |
+| Logging              | `log/slog` — structured JSON, per-request access logs + request ids |
+| Containerization     | Docker, multi-stage → distroless static image   |
+| Orchestration        | Kubernetes manifests (Deployment + Service, liveness/readiness probes) |
+| CI                   | GitHub Actions (`go vet`, race tests, build)    |
 | Cache + rate limit   | Redis (Phase 2)                                 |
-| Metrics / dashboards | Prometheus + Grafana (Phase 3)                  |
-| Logging              | `log/slog` (structured JSON)                    |
-| Containerization     | Docker, multi-stage (Phase 3)                   |
-| Orchestration        | Kubernetes via `kind` (Phase 4)                 |
-| Load testing         | k6 (Phase 4)                                    |
+| Metrics / dashboards | Prometheus + Grafana (Phase 2)                  |
+| Load testing         | k6 (Phase 3)                                    |
 | Config               | 12-factor: environment variables                |
 | Tests                | stdlib `testing`, table-driven; `httptest`      |
 
@@ -54,22 +57,23 @@ rest land in later phases.
 llm-gateway/
   cmd/gateway/main.go        # entrypoint: config, wiring, start + graceful shutdown
   internal/
-    server/                  # Gin engine, routes, handlers (+ tests)
-    middleware/              # auth, request-id, logging (Phase 2–3)
-    providers/               # Provider interface; openai.go, mock.go
-    cache/                   # Redis response cache (Phase 2)
-    ratelimit/               # Redis token-bucket limiter (Phase 2)
-    metrics/                 # Prometheus collectors (Phase 3)
+    server/                  # Gin engine, routes, handlers, middleware (+ tests)
+    providers/               # Provider interface; openai.go, mock.go, transport.go
     config/                  # env-based config loader
-  deploy/                    # Dockerfile, compose, k8s, grafana (Phase 3–4)
-  loadtest/                  # k6 scripts (Phase 4)
+    cache/                   # Redis response cache (Phase 2)
+    ratelimit/               # token-bucket limiter (Phase 2)
+    metrics/                 # Prometheus collectors (Phase 2)
+  Dockerfile                 # multi-stage build → distroless static image
+  k8s/                       # Deployment + Service (liveness/readiness probes)
+  .github/workflows/         # CI: go vet + race tests + build
+  loadtest/                  # k6 scripts (Phase 3)
   .env.example
   Makefile
 ```
 
 ## Quick start (Phase 1)
 
-Prerequisites: Go 1.22+ (`go version`).
+Prerequisites: Go 1.25+ (`go version`).
 
 ```bash
 # 1. Configure
@@ -138,7 +142,21 @@ Request body:
 
 ### `GET /healthz` · `GET /readyz`
 
-Liveness and readiness probes for Kubernetes.
+Liveness and readiness probes for Kubernetes. `/healthz` reports process
+liveness; `/readyz` returns `503` once the server begins graceful shutdown so
+the load balancer drains this instance before it exits.
+
+## Container & Kubernetes
+
+```bash
+make docker-build      # multi-stage build → distroless static image
+make docker-run        # run the container locally (reads .env)
+
+# Deploy to a cluster (e.g. kind/minikube):
+kubectl create secret generic llm-gateway-secrets \
+  --from-literal=openai-api-key=sk-your-key
+kubectl apply -f k8s/  # Deployment + Service, probes wired to /healthz and /readyz
+```
 
 ## Development
 
@@ -155,8 +173,11 @@ satisfies the same `Provider` interface as the real client.
 
 ## Roadmap
 
-- [x] **Phase 1** — Core SSE streaming proxy (OpenAI), health probes, tests.
-- [ ] **Phase 2** — Redis response cache + token-bucket rate limiting + API-key auth.
-- [ ] **Phase 3** — Prometheus metrics, structured request logging, Docker, docker-compose, Grafana dashboard.
-- [ ] **Phase 4** — Kubernetes manifests (kind), provider fallback, HPA, k6 load test.
-- [ ] **Phase 5** — Stretch: Helm chart, gRPC API, Terraform, rule-based routing, per-key budgets.
+- [x] **Phase 1** — SSE streaming proxy (OpenAI) behind a `Provider` interface;
+      liveness + readiness probes; per-request structured JSON logging with
+      request ids; tuned HTTP transport; graceful shutdown; table-driven tests;
+      multi-stage distroless Docker image; Kubernetes manifests; GitHub Actions CI.
+- [ ] **Phase 2** — Multi-provider routing + automatic fallback (Anthropic),
+      per-key rate limiting, Redis response cache, API-key auth, Prometheus `/metrics`.
+- [ ] **Phase 3** — Grafana dashboards, HPA autoscaling, k6 load tests.
+- [ ] **Phase 4** — Stretch: Helm chart, gRPC API, Terraform, per-key budgets.

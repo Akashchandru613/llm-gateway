@@ -33,7 +33,7 @@ func NewOpenAIProvider(apiKey, baseURL string, timeout time.Duration) *OpenAIPro
 	return &OpenAIProvider{
 		apiKey:     apiKey,
 		baseURL:    strings.TrimRight(baseURL, "/"),
-		httpClient: &http.Client{Timeout: timeout},
+		httpClient: NewHTTPClient(timeout),
 	}
 }
 

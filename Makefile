@@ -1,6 +1,5 @@
 # Makefile for the LLM Gateway. Run `make help` to list targets.
-# (More targets — docker-build, compose-up, k8s-deploy, loadtest — arrive in
-# later phases.)
+# (More targets — compose-up, k8s-deploy, loadtest — arrive in later phases.)
 
 # Load .env if present so `make run` picks up local config.
 ifneq (,$(wildcard .env))
@@ -10,7 +9,7 @@ endif
 
 BINARY := bin/gateway
 
-.PHONY: help run build test vet fmt tidy
+.PHONY: help run build test vet fmt tidy ci docker-build docker-run
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -32,3 +31,14 @@ fmt: ## Format all Go source
 
 tidy: ## Tidy go.mod / go.sum
 	go mod tidy
+
+ci: ## Run the CI checks locally (vet + race tests + build)
+	go vet ./...
+	go test -race ./...
+	CGO_ENABLED=0 go build ./...
+
+docker-build: ## Build the container image (multi-stage, distroless)
+	docker build -t llm-gateway:latest .
+
+docker-run: ## Run the container locally (reads .env)
+	docker run --rm -p 8080:8080 --env-file .env llm-gateway:latest

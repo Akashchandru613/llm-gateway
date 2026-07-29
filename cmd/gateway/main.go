@@ -82,6 +82,10 @@ func run(logger *slog.Logger) error {
 		logger.Info("shutdown signal received, draining in-flight requests")
 	}
 
+	// Report not-ready so Kubernetes / load balancers stop sending new traffic
+	// here before we start draining in-flight requests.
+	srv.SetReady(false)
+
 	// Give in-flight requests up to 15s to finish before forcing exit.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
